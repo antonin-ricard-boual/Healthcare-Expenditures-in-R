@@ -1,0 +1,1152 @@
+---
+title: "Data Handling: Group Project, Part 2"
+subtitle: "Group Project 21"
+author:
+- name: Isaac-Louys de Crousaz (24-619-835) 
+- name: Pedro Penetra Carolo Negrão (23-816-804) 
+- name: Janic Wermuth (24-610-834)
+- name: Antonin Ricard-Boual (24-619-934)
+- name: Killian Borgeaud (24-608-689)
+date: "10 December 2025"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+    self-contained: true
+    self-contained-math: true
+    highlight-style: github
+    toc: true
+    toc-depth: 3
+    toc-expand: true
+    toc-location: left
+    code-summary: "Show Code"
+execute:
+  echo: true
+  eval: true
+  results: "hide"
+  warning: false
+  message: false
+---
+
+<hr>
+
+<br>
+
+## R Setup
+
+```{r}
+
+#Loading necessary libraries
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(skimr)
+library(summarytools)
+library(countrycode)
+library(knitr)
+library(kableExtra)
+library(forcats)
+library(ggrepel)
+library(scales)
+
+
+# Import data (change the path)
+df_WorldBank_health <- read.csv("Material\\df_WorldBank_health.csv")
+df_WorldBank_life_expectancy <- read.csv("Material\\df_WorldBank_life_expectancy.csv")
+df_oecd_life_expectancy <- read.csv("Material\\df_oecd_life_expectancy.csv")
+df_oecd_phs <- read.csv("Material\\df_oecd_phs.csv")
+
+```
+
+<hr>
+
+<br> <br>
+
+# Homework Part 2 (due December 10th, 2025)
+
+The relationship between health expenditures and health outcomes has long been a central topic in health economics. Empirical studies show a positive but non‐linear relationship between health spending and outcomes such as life expectancy, particularly in low‐ and middle‐income countries.
+
+In high‐income settings, however, diminishing returns are evident. For example, the United States spends more per capita on health than any other nation, yet its health outcomes often lag behind those of countries with lower spending (Anderson et al. (2003)). In this group project, we investigate the relationship between health expenditures and health outcomes.
+-+-
+
+<hr>
+
+<br> <br> <br>
+
+## 3 Data cleaning
+<br>
+
+### Health expenditures (World Bank)
+
+We first clean the World Bank health expenditures dataset.
+
+```{r}
+
+
+#We do a general inspection of the dataframe
+skim(df_WorldBank_health)
+
+
+
+#We check which missing values are different between the columns and select them
+df_WorldBank_health |>
+  filter(xor(is.na(ind_WorldBank_health_gdp),
+             is.na(ind_WorldBank_health_usd)) ) |>
+  select(country, year)
+
+countries_with_na_usd <- df_WorldBank_health |>
+  filter(is.na(ind_WorldBank_health_usd)) |> 
+  select(country)
+
+```
+
+We identify that among the 15 columns, only the following share relevant information for the analysis:
+
+-   `country`
+
+-   `iso3c`
+
+-   `year`
+
+-   `ind_WorldBank_health_gdp`
+
+-   `ind_WorldBank_health_usd`
+
+-   `income`
+
+We found 676 missing values in the column `ind_WorldBank_health_gdp`, and 678 in `ind_WorldBank_health_usd`. After verification, these findings are coherent with our previous observation in part 1. The difference between the two columns comes from Cuba, whose values for health expenditures in USD are missing for 2021 and 2022.
+
+We then proceed by cleaning the data frame and by keeping only the columns necessary for analysis, arranging them by `country`, `year`.
+
+We also decide to completely remove any countries that display total or partial missing values in the column `ind_WorldBank_health_usd` (this also covers missing values in `ind_WorldBank_health_gdp` as shown above).
+
+The NAs in the column income (207 after filtering out rows with missing values) stem from missing data for the countries of Somalia Fed. Rep. and Puerto Rico (US) or aggregated countries.
+
+We notice when looking at the `skim()` function that there are 92 empty values for `iso3c`. We see that this is due to the fact that the world bank creates subcategories by income group. We decide to take these out for consistency reasons. Later on we will group according to the income as it is represented in the `income` column. Our data will only have as observations individual countries and years so as to maintain consistency.
+
+```{r}
+
+#We select relevant columns, removes rows with NA and order the set by country and year
+df_clean_WB_healthexp <- df_WorldBank_health |> 
+  select(country, iso3c, year, ind_WorldBank_health_gdp, ind_WorldBank_health_usd, income)|> 
+  filter(!country %in% countries_with_na_usd$country) |> 
+  filter(iso3c != "") |>
+  arrange(country, year)
+
+# We now do another inspection to check if the data frame is clean
+skim(df_clean_WB_healthexp)
+
+```
+
+We now have a clean, ordered dataframe without any NA and only relevant information
+
+Summary :
+
+-   For variable `ind_WorldBank_health_gdp`, the median is 5.40 %. This is a reasonable value. The min. is 1.11 and the max. 24.23 which is coherent with our findings in part 1.
+
+-   For variable `ind_WorldBank_health_usd`, the median is 255.81 USD. This is a reasonable value. The min. is 4.17 and the max 12434.43 which is coherent with our findings in part 1.
+
+<br>
+
+<br>
+
+### Life Expectancy (World Bank)
+
+We now clean the World Bank ife expectancy dataset.
+
+```{r}
+
+#We do a general inspection of the dataframe
+skim(df_WorldBank_life_expectancy)
+
+#Understanding of the missing values 
+sum(is.na(df_WorldBank_life_expectancy$SP.DYN.LE00.IN))
+df_WorldBank_life_expectancy |> 
+  filter(is.na(SP.DYN.LE00.IN)) |>
+  distinct(country)
+
+```
+
+The columns that interest us are the `country`, the code to identify them, i.e. `iso3c` as it is widely used among OECD and WB and allow smooth merging, the `year` and finally `SP.DYN.LE00.IN`, being the life expectancy in years.
+
+We found 23 missing values for the life expectancy and 92 empty cell in the column `country`.
+
+After inspection, the country that displays all the 23 NA is a category named `Not classified`. This category does not carry any analytic value for our project. We therefore delete all the rows that contain NAs or empty values in that column. We then proceed by removing any unnecessary columns (`X`, `iso2c`), and changing the name of `SP.DYN.LE00.IN` to a simpler one, `life_expectancy`.
+
+```{r}
+
+df_clean_WB_lifeexp <- df_WorldBank_life_expectancy |>
+  select(country, iso3c, year, SP.DYN.LE00.IN) |>
+  rename(life_expectancy = SP.DYN.LE00.IN) |>
+  filter(!country %in% c("Not classified", "")) |>  
+  arrange(country, year)
+
+#We now do another inspection to check if the data frame is clean
+skim(df_clean_WB_lifeexp)
+
+```
+
+We now have a clean, ordered dataframe without any NA in the observation values and only relevant information.
+
+Summary of the variables: 
+
+- The variable `life_expectancy` has a median of 71.86. It is reasonable. The minimum is 14.66 and the max is 86.15. We already explored this in part 1 and is coherent.
+
+<br>
+
+<br>
+
+### Health Status (OECD)
+
+```{r}
+
+#We do a general inspection of the dataframe
+skim(df_oecd_phs)
+
+#We now analyse which variables are necessary for our analysis and follow the given definition for perceived health status.
+
+unique(df_oecd_phs$AGE)
+unique(df_oecd_phs$SEX)
+unique(df_oecd_phs$REF_AREA)
+
+```
+
+We observe that, among the age groups, only the variable `Y_GE15` (15 years old and older) interests us. Among the sex group only `\_T` (total) interests us. We also want to make sure that `REF_AREA` uses `iso3c` as, contrary to the other datasets, the column does not have title `iso3c`. Therefore, to ensure correct merging with the other data frames later on, we use the function `countrycode()` to test if the code used is `iso3c`. The function will create a new column with the country names associated to the code only if the code used is indeed `iso3c`.
+
+```{r}
+
+#We check if the code is iso3c
+country_function <- function(df){
+  df |>
+    mutate(
+      iso3c = REF_AREA, 
+      country_name = countrycode(REF_AREA,
+      origin = "iso3c",
+      destination = "country.name") 
+      )
+}
+df_oecd_phs <- country_function(df_oecd_phs)
+head(df_oecd_phs)
+
+```
+
+There is a new column with the countries names associated with their respective codes. We can then keep the column `REF_AREA` and rename it `iso3c`. We will now focus on the `HEALTH_STATUS`, the reported perceived health status. After inspection of the OECD website,
+
+*https://dataexplorer.oecd.org/vislc=en&df\[ds\]=dsDisseminateFinalDMZ&df\[id\]=DSD_HEALTH_STAT%40DF_PHS&df\[ag\]=OECD.ELS.HD&df\[vs\]=1.0*
+
+we see that `G` stands for Good/very good - and excellent. We therefore are not interested in `F` (Fair), and `B` (Bad). Same apply to `SOCIO_ECON_STATUS`, we only keep `\_Z` as it is the total. We first remove all the age groups that don't fit our criterion and then remove the column age. We proceed the same way for the columns `SEX`, only keeping `\_T` and removing it afterward as well as `ObsValue`, only keeping `G`.
+
+Then we rename the desired columns and remove all the others
+
+```{r}
+
+#We apply the aforementioned transformation 
+df_clean_oecd_phs <- df_oecd_phs |> 
+  filter(AGE == "Y_GE15", 
+         SEX == "_T", 
+         HEALTH_STATUS =="G", 
+         SOCIO_ECON_STATUS == "_Z") |>
+  select(ObsValue, REF_AREA, TIME_PERIOD, country_name) |> 
+  rename(percent_good_phs = ObsValue, 
+         iso3c = REF_AREA, 
+         year = TIME_PERIOD, 
+         country = country_name) |>
+  arrange(country, year)
+
+skim(df_clean_oecd_phs)
+
+```
+
+We now have a clean dataframe. We can see that `REF_AREA` was in `iso3c` given that there are no missing values in the column `country`, which was created with the `country_code()` function above.
+
+Summary: 
+
+- The variable `percent_good_phs` has a median of 69.90. This is a reasonable value.
+
+<br>
+
+<br>
+
+### Life Expectancy (OECD)
+
+```{r}
+
+#We do a general inspection of the dataframe
+skim(df_oecd_life_expectancy)
+
+```
+
+The data frame is, as expected, very similar. We repeat the process of using the function `countrycode()` to add the column country.
+
+```{r}
+
+#We proceed the same way as for the previous df, ensuring usage of iso3c and creating a new column country 
+df_oecd_life_expectancy <- df_oecd_life_expectancy |>
+  mutate( iso3c = REF_AREA, country_name = countrycode(REF_AREA, origin = "iso3c",destination = "country.name")) 
+
+```
+
+We now do the same cleaning as before.
+
+```{r}
+
+
+df_clean_oecd_lifeexp <- df_oecd_life_expectancy |> 
+  filter(SEX == "_T") |> 
+  mutate( oecd_lifeexp = ObsValue, iso3c = REF_AREA, year = TIME_PERIOD, country = country_name) |> 
+  select(country, iso3c, year, oecd_lifeexp) |> 
+  arrange(country, year)
+
+# We finally check whether the table is now clean
+skim(df_clean_oecd_lifeexp)
+
+```
+
+We now have a clean dataframe.
+
+Summary : 
+
+- The variable `oecd_lifeexp` has a median of 78.40. This is different than the life expectancy from the World Bank. This is expected as the OECD list is shorter and encompasses mostly wealthier countries. The min is 53.90 and the max is 84.60. The max. is, as expected, the same as in the WB list.
+
+<hr>
+
+<br>
+
+<br>
+
+<br>
+
+## 4 Measuring healthcare quality
+
+<br>
+
+
+<br>
+
+<br>
+
+### 4 Choosing Between OECD and World Bank for Life Expectancy
+
+We have two datasets from different sources for the same indicator, that is life expectancy. The OECD dataset contains the OECD nations, and also a few other countries, for exmpale Romania. The World Bank data contains the life expectancy for almost every country worldwide.
+
+The OECD often uses member-country statistical offices, eurostat or data from the world bank for other countries.
+
+*OECD Health Statistics 2025 Definitions, Sources and Method, https://stats.oecd.org/wbos/ fileview2.aspx?IDFile=3607ac98-7466-4ea2-9f96-5410382b1497*
+
+The World Bank has its life expectancy data sourced from the UN World Population Prospects as well as statistical databases and publications from national statistical offices. Additional sources include Eurostat’s Demographic Statistics, which similarly derive estimates from national statistical systems.
+
+*https://databank.worldbank.org/metadataglossary/world-development-indicators/series/SP.DYN.LE00.IN*
+
+```{r}
+# We merge both datasets to compare life expectancy for countries in common.
+df_merged <- merge(df_clean_oecd_lifeexp,df_clean_WB_lifeexp, by = c("country", "year"))
+colnames(df_merged)[colnames(df_merged) == "life_expectancy"] <- "wb_lifeexp"
+
+# We calculate the differences in life expectancy
+differences_life_exp  <- mean(df_merged$oecd_lifeexp - df_merged$wb_lifeexp)
+print(differences_life_exp)
+
+```
+
+The OECD life expectancy is, on average, only 0.14 years higher than the World Bank (WB) data for the countries in common, which is a relatively small difference. Given the substantial overlap in data sources, and the fact that the World Bank dataset includes more countries (which will be useful for later exercises) we choose to use the World Bank life expectancy dataset.
+
+### 5 Merge the data
+
+#1 We will merge on the variables `iso3c` and `year`.
+
+#2 We first take out the aggregates from our World Bank health expenditures dataset we want to merge into. This will also then take out the aggregate countries in the World Bank life expectancy dataset when we will merge.
+
+```{r}
+df_clean_WB_healthexp <- df_clean_WB_healthexp |> filter(income != "Aggregates")
+
+```
+
+#3 Here a left join is appropriate. We want to keep the rows of the largest dataset, the World Bank health expenditures (this one is on the left), which ensures: first that we retain only individual countries rather than aggregates and second that we include the maximum number of countries for our analysis later on.
+
+#4 The `country` columns of the other datasets are also merged. We take these out for more clarity, the skim function shows that there are no particular missing values in any columns except for perceived health status. This is normal given that it is only available for OECD countries and a few others.
+
+```{r}
+
+# We left join df_clean_oecd_phs and df_clean_WB_lifeexp to df_clean_WB_healthexp
+
+master_df <- left_join(df_clean_WB_healthexp, df_clean_oecd_phs, by = c("iso3c", "year"), relationship = "one-to-one")
+master_df <- left_join(master_df, df_clean_WB_lifeexp, by = c("iso3c", "year"),relationship = "one-to-one")
+
+# Take out extra columns
+master_df <- master_df |> 
+  select(-country.x, -country.y)
+
+skim(master_df)
+
+```
+
+We notice that perceived health status has 3520 missing values, this is to be expected given that these are available only for OECD countries and a few others (4186 rows for the masterdf - 666 rows OECD dataset phs = 3520). We keep these for completeness and we will note the difference in the following exercises, when using this indicator. We preferred to have as many countries as possible.
+
+<hr>
+
+<br>
+
+<br>
+
+<br>
+
+## 6 Explore and visualize the data
+
+<br>
+
+### 6.1 Trend in health expenditure per capita (USD)
+
+### Build a yearly summary of healthcare spending (USD + %GDP)
+
+We plot two graphs for health expenditure as a % of GDP and nominal USD per capita.
+
+```{r}
+
+general_health_exp <- master_df |>
+  select(year, country, ind_WorldBank_health_usd, ind_WorldBank_health_gdp) |>
+  group_by(year) |>
+  summarise(
+    # Average expenditure across all countries for each year
+    sum_usd = mean(ind_WorldBank_health_usd),
+    # Average healthcare spending as a share of GDP
+    sum_gdp = mean(ind_WorldBank_health_gdp)
+  )
+
+# Reshape the data so both indicators can be displayed with the same ggplot call
+general_health_exp_long <- pivot_longer(
+  general_health_exp,
+  cols = sum_usd:sum_gdp,
+  names_to = "unit",
+  names_prefix = "sum_",
+  values_to = "sum"
+)
+
+# Plot the two indicators side by side, each with its own y-scale
+ggplot(general_health_exp_long, aes(x = year, y = sum)) +
+  geom_line(color = "green", size = 1) +
+  facet_wrap(~ unit, scales = "free_y") +
+  labs(
+    title = "General Healthcare Expenditure per Year",
+    x = "Year",
+    y = "Healthcare Expenditure"
+  ) +
+  theme_minimal()
+```
+
+<br>
+
+### Trend Summary:
+
+Both indicators show a generally rising pattern over the 2000–2022 period. Healthcare spending in USD grows quite sharply, especially from the mid-2000s onward, with a few temporary slowdowns but a clear long-term increase. Healthcare expenditure as a share of GDP also trends upward, although the movements are less pronounced, especially at the beginning of the timespan. In sum, the two lines follow the same trend but do not move identically: changes in the % of GDP reflect not only health spending but also fluctuations in GDP levels.
+
+<br>
+
+### Cautions:
+
+USD and GDP figures are nominal values, and, as a result, rise partly because of inflation or exchange rates, and not solely due to higher real spending. The % of GDP metric depends on both the numerator (health expenditure) and the denominator (GDP), therefore, GDP shocks or recessions can shift the ratio. It should also be pointed out that these averages mask substantial differences across countries.Thus, individual trajectories may diverge considerably from the aggregated trend.
+
+<br>
+
+<br>
+
+### 6.2 Expenditures per income group
+
+In this task, we first generate a plot showing the Health Expenditure per Capita by Income Group, a table with the Compound Annual Growth Rate (CAGR) for each income level, and finally a Healthcare Expenditure (% of GDP) by Income Level graph, as it showcases some differences compared to the expenditures per capita plot (see analysis below).
+
+```{r}
+
+
+master_df$income <- factor(master_df$income,
+                           levels = c("Low income", "Lower middle income",
+                                      "Upper middle income", "High income"),
+                           ordered = TRUE)
+
+ggplot(master_df, aes(x = year, y = ind_WorldBank_health_usd, color = income)) +
+  geom_smooth(se = FALSE, size = 1.2)+
+  scale_y_log10()+ 
+  labs(
+    title = "Health Expenditure per Capita by Income Group",
+    x = "Year",
+    y = "USD Expenditure"
+  ) +
+  theme_minimal()
+
+```
+
+The plot shows the evolution of per-capita health expenditure across income groups on a base 10 logarithmic scale, which means differences in slopes correspond to differences in growth rates. All income groups exhibit upward trends, but the steepness varies substantially.
+
+On the log scale, the upper-middle income group shows the steepest slope, indicating the fastest percentage growth over the last two decades. High-income countries still have the highest expenditure levels overall, but their log-trend is slightly flatter, meaning their relative (percentage) growth is slower. Lower-middle and low-income groups grow more slowly, and the low-income trend almost plateaus after 2010.
+
+Overall, the log-scaled plot reveals that although high-income countries spend far more in absolute terms, upper-middle income countries have experienced the most rapid proportional growth in healthcare spending since 2000.
+
+```{r}
+
+growth_df <- master_df |>
+  group_by(income) |>
+  summarise(
+    first_year = first(ind_WorldBank_health_usd),
+    last_year  = last(ind_WorldBank_health_usd),
+    cagr       = (last_year / first_year)^(1/(max(year)-min(year))) - 1
+  ) |>
+  arrange(desc(cagr))
+
+# Aesthetics (not important)
+growth_df |> 
+  mutate(
+    first_year = round(first_year, 1),
+    last_year  = round(last_year, 1),
+    cagr       = percent(cagr, accuracy = 0.01)
+  ) |>
+  kable(
+    format = "html",
+    caption = "CAGR of Health Expenditure by Income Group",
+    col.names = c("Income Group", "First Year", "Last Year", "CAGR"),
+    align = "lrrr"
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    position = "center"
+  )
+
+```
+
+We devised a table with the Compound Annual Growth Rate (CAGR) for each income level.The results confirm that upper-middle-income countries exhibit the fastest proportional growth in per-capita health expenditure, with an annualized growth rate of 13.61% per year since 2000.
+
+Lower-middle-income (8.30%) and low-income countries (7.77%) also show relatively strong percentage growth, although from a much lower starting base.
+
+In contrast, high-income countries show the highest levels of spending, but the slowest growth rate (only 1.64% per year). This reflects the typical saturation pattern, where high-income countries already spend a lot, so their proportional increases are smaller.
+
+```{r}
+
+# Prepare a dataset for plotting and ensure income groups follow a clear order
+health_exp_gdp <- master_df |>
+  mutate(
+    income = factor(
+      income,
+      levels = c("High income", "Upper middle income",
+                 "Lower middle income", "Low income")
+    )
+  ) |>
+  select(year, income, ind_WorldBank_health_gdp) |>
+  group_by(year, income) |>
+  summarise(
+    avg_gdp = mean(ind_WorldBank_health_gdp, na.rm = TRUE)
+  ) |>
+  arrange(income)
+
+# Visualize how healthcare expenditure as % of GDP evolves by income category
+ggplot(health_exp_gdp, aes(x = year, y = avg_gdp, color = income)) +
+  geom_line(size = 1.2) +
+  labs(
+    title = "Healthcare Expenditure (% of GDP) by Income Level",
+    x = "Year",
+    y = "% of GDP",
+    color = "Income Category"
+  ) +
+  theme_minimal()
+```
+
+The plot shows how health expenditures as a share of GDP has evolved across income groups. All groups trend upward, but the increases differ (especially compared to the previously displayed "Health Expenditure per Capita by Income Group" graph): high-income countries show the largest and most sustained rise, with a clear jump around 2020. Upper-middle-income countries also grow steadily, though with a gentler slope. Lower-middle and low-income groups increase more slowly and remain well below the others.
+
+In contrast to the USD plot where upper-middle-income countries displayed the fastest percentage growth, the %GDP measure rises most strongly for high-income countries. This is because their spending increased while GDP growth was comparatively slower, especially around 2020.
+
+We can see that health expenditure as % of GDP is far more volatile than health expenditure per capita. Since the only difference between the two lies in the denominator, we can easily infer that the increased volatility is due to the higher fluctuation of GDP compared to population. This makes sense, as short-term GDP changes are unlikely to influence public health expenditures very much. This explains why using this metric is noisier that health expenditure per capita in later graphs.
+
+<br>
+
+<br>
+
+### 6.3 Life expectancy
+
+For this task, we first generate a plot illustrating life expectancy by income group, and subsequently a plot illustrating three life-expectancy differences between group over time, in order to evaluate convergence.
+
+```{r}
+
+lifeexp_income <- master_df |>
+  group_by(year, income) |>
+  summarize(mean_lifeexp = mean(life_expectancy, na.rm = TRUE))
+
+ggplot(lifeexp_income, aes(x = year, y = mean_lifeexp, color = income)) +
+  geom_line(size = 1.1) +
+  labs(
+    title = "Life Expectancy by Income Group (World Bank)",
+    x = "Year",
+    y = "Life Expectancy at Birth"
+  ) +
+  theme_minimal()
+
+
+```
+
+Life expectancy rises across all income groups, with high-income countries maintaining the highest levels throughout the period.
+
+Upper-middle and lower-middle income groups show steady improvements, gradually closing part of the distance to high-income countries.
+
+Low-income countries also improve, but at a slower pace, keeping them far behind the rest despite some progress.
+
+```{r}
+
+# Create a wide dataset with one column per income group (needed to compute differences)
+
+gap_df <- lifeexp_income |>
+  select(year, income, mean_lifeexp) |>
+  pivot_wider(names_from = income, values_from = mean_lifeexp) |>
+  # Compute the most relevant life expectancy gaps between income groups
+  mutate(
+    gap_high_low       = `High income` - `Low income`,
+    gap_high_lowmid    = `High income` - `Lower middle income`,
+    gap_upmid_lowmid   = `Upper middle income` - `Lower middle income`
+  )
+
+# Reshape to long format so ggplot can plot all gaps using a single aes() call
+
+gap_long <- gap_df |>
+  select(year, gap_high_low, gap_high_lowmid, gap_upmid_lowmid) |>
+  pivot_longer(-year, names_to = "gap_type", values_to = "gap_value")
+
+# Plot the evolution of each gap over time to assess convergence/divergence
+
+ggplot(gap_long, aes(year, gap_value, color = gap_type)) +
+  geom_line(size = 1.2) +
+  labs(
+    title = "Key Life Expectancy Gaps Between Income Groups",
+    y = "Gap in Years"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+All three life-expectancy gaps decline over time, indicating gradual global convergence. However, the High–Low and High–Lower Middle gaps remain substantial even in 2022, showing only slow narrowing and still far from closing.
+
+The only gap that moves close to zero is the Upper Middle minus Lower Middle gap, which steadily decreases and approaches near-convergence by the end of the period.
+
+Overall, the data suggest broad improvements in life expectancy worldwide, but full convergence is limited to the middle-income range, while large gaps between the richest and poorest countries persist.
+
+<br>
+
+<br>
+
+### 6.4 Perceived health status
+
+In order to address this task, we first plot the average perceived health status over time to show how the overall level evolves. In a second step, we generate a country-by-country heatmap to reveal cross-country differences as well as in-country developments of perceived health status.
+
+```{r}
+
+#Remove NA values 
+
+clean_df <- master_df |>
+  filter(!is.na(percent_good_phs))
+
+# Descriptive statistics per year
+health_year <- clean_df |>
+  group_by(year) |>
+  summarize(
+    mean_phs = mean(percent_good_phs, na.rm = TRUE),
+    sd_phs = sd(percent_good_phs, na.rm = TRUE)
+  )
+
+# Plot trend
+ggplot(health_year, aes(year, mean_phs)) +
+  geom_line(size = 1.2, color = "#1f77b4") +
+  geom_ribbon(aes(ymin = mean_phs - sd_phs,
+                  ymax = mean_phs + sd_phs),
+              fill = "#1f77b4", alpha = 0.15) +
+  labs(
+    title = "Average Perceived Good Health Over Time",
+    x = "Year",
+    y = "% Reporting Good Health"
+  ) +
+  theme_minimal()
+
+health_country <- clean_df |>
+  
+  group_by(country) |>
+  summarize(
+    mean_phs = mean(percent_good_phs, na.rm = TRUE),
+    sd_phs = sd(percent_good_phs, na.rm = TRUE),
+    n_years = sum(!is.na(percent_good_phs))
+  ) |>
+  arrange(desc(mean_phs))
+
+# Show top and bottom 5
+head(health_country, 5)
+tail(health_country, 5)
+
+```
+
+The global average of people reporting good or very good health fluctuates around 67–72% over the period 2000–2022, with no strong long-run trend upward or downward.
+
+Variation across countries remains very large, as shown by the wide confidence band (±1 SD), indicating substantial heterogeneity in perceived health.
+
+The country-level statistics reveal a wide range: countries such as New Zealand, Canada, the United States, Australia, and Ireland consistently report the highest perceived health levels (above \~83%).
+
+At the lower end, countries such as Portugal, South Korea, Latvia, Lithuania, and Japan report much lower levels (around \~35–48%), highlighting persistent cross-country differences.
+
+Furthermore, Missing values (NAs) for percent_good_phs were excluded before computing descriptive statistics, so countries appear with different numbers of valid observations (n_years)
+
+Indeed, OECD PHS coverage is limited, only OECD countries report this survey data, and even within OECD, not all years are reported.
+
+Overall, perceived health status shows modest global improvement and strong stability over time, but cross-country disparities remain large and persistent.
+
+```{r}
+
+# Identify countries with available perceived health status data
+countries <- master_df |>
+  filter(!is.na(percent_good_phs)) |>
+  group_by(country) |>
+  summarise(avg_phs = mean(percent_good_phs, na.rm = TRUE)) |>
+  arrange(desc(avg_phs)) |>
+  pull(country)
+
+# Prepare dataset for the heatmap (exclude very early years with sparse data)
+phs_heatmap <- master_df |>
+  filter(country %in% countries,
+         year >= 2006,
+         !is.na(percent_good_phs)) |>
+  group_by(country, year) |>
+  summarise(
+    phs = mean(percent_good_phs, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  complete(country, year, fill = list(phs = NA))  # fill missing combinations
+
+# Create the heatmap
+ggplot(phs_heatmap, aes(x = year,
+                        y = reorder(country, phs, na.rm = TRUE),
+                        fill = phs)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(
+    low = "white",
+    high = "darkblue",
+    na.value = "grey90",
+    name = "Percentage"
+  ) +
+  labs(
+    title = "Perceived Health Status (PHS) Heatmap",
+    x = "Year",
+    y = "Country"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 9)
+  )
+```
+
+The heatmap clearly visualizes the strong cross-country heterogeneity already highlighted in the descriptive statistics. Countries such as New Zealand, Canada, the United States, Australia, and Ireland consistently appear in the darkest shades, confirming their position at the top of the PHS distribution.
+
+In contrast, several Eastern European and East Asian countries (for example, Japan, Lithuania, Portugal) remain in much lighter tones, illustrating persistently lower levels of perceived good health.
+
+The heatmap also makes data availability patterns visible: missing survey waves produce pale or blank segments, reflecting the uneven OECD reporting coverage.
+
+Overall, the visual pattern reinforces the earlier findings: perceived health status is relatively stable over time within each country, but differences between countries are large and persistent.
+
+<hr>
+
+<br>
+
+<br>
+
+<br>
+
+## 7 Three Hypotheses
+
+<br>
+
+### 7.1 Formulate your hypotheses
+
+We’re interested in the correlation between healthcare expenditure and healthcare quality at the country level. More specifically, we want to test three hypotheses. To guide you in the formulation of these three hypotheses, answer the following questions without using the data, be as concise as possible.
+
+<br>
+
+1.  Ex ante, would you expect a correlation between healthcare expenditure and healthcare quality? If so, would it be a positive or negative correlation?
+
+    **Hypothesis:** We expect a positive correlation between healthcare expenditure and healthcare quality. For life expectancy we anticipate a relatively strong, concave relationship. Higher spending allows for more/better staff, better treatments etc., which should improve outcomes. However, we also expect diminishing marginal returns once a basic level of quality is reached. For perceived health we still expect a positive but weaker and noisier link, because self reported health is subjective and also reflects age structure, and the fact that in rich countries medicine can keep people alive for many years in poor health, so perceived health is likely to level off at high spending rather than keep rising strongly. This expenditure, quality link should be strongest when we measure spending in USD per capita, which captures real resources spent per person, and weaker when we use expenditure as a share of GDP, since that ratio also reflects the size and movements in GDP that are not directly related to healthcare quality.
+
+<br>
+
+2.  Do you think health status and life expectancy are correlated? If so, would it be a positive or negative correlation?
+
+    **Hypothesis**: For health status and life expectancy we also expect a positive correlation as more people reporting good or very good health suggests fewer chronic conditions and better overall health which we would assume lead to people living longer lives.
+
+<br>
+
+3.  Do you expect the correlation between expenditures and healthcare quality to be the same for high and low income countries?
+
+    **Hypothesis:** For expenditure per capita in USD, we anticipate a stronger correlation in low income countries, where extra spending finances basic services with large health gains, and a weaker correlation in high income countries, where it mainly buys incremental improvements. For expenditure as a share of GDP, we expect no clear monotone pattern: poor countries can devote a high share of a small GDP to health yet still have poor outcomes because poverty related factors (conflict, pollution, weak infrastructure, malnutrition) dominate, while rich countries can have good outcomes with only a moderate GDP share because these background conditions are already favourable.
+
+<br> <br>
+
+### 7.2 Validate (or invalidate) your three hypotheses
+
+Healthcare quality is unobserved, so we approximate it with two proxies: life expectancy at birth (global coverage, World Bank) and perceived health status (share reporting good or very good health, available only for OECD countries and a few other countries). For tasks 7.2.1–7.2.3 we build df_2019 by restricting to 2019. As perceived health status is available for less countries than life expectancy, plots using perceived health status have less datapoints. Throughout these tasks we always report results for both expenditure measures, that is health expenditure per capita in USD and health expenditure as a share of GDP.
+
+<br>
+
+#### subset 2019
+
+```{r}
+df_2019 <- master_df |>
+  filter(year == 2019)
+```
+
+<br>
+
+#### 7.2.1 Correlation between healthcare expenditure and healthcare quality
+
+##### Health expenditure per capita in USD and life expectancy
+
+```{r}
+
+ggplot(
+  df_2019,
+  aes(x = ind_WorldBank_health_usd,
+      y = life_expectancy)
+) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(
+    se = FALSE, colour = "red") +
+  geom_smooth(method="lm", se = FALSE, color = "darkgreen") +
+  scale_x_continuous() +
+  labs(
+    title = "Health expenditure per capita in USD and life expectancy, 2019",
+    x = "Health expenditure per capita in USD",
+    y = "Life expectancy at birth in years"
+  ) +
+  theme_minimal()
+```
+
+<br>
+
+##### Health expenditure as a share of GDP and life expectancy
+
+```{r}
+ggplot(
+  df_2019,
+  aes(x = ind_WorldBank_health_gdp,
+      y = life_expectancy)
+) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(
+    se = FALSE, colour = "red") +
+  geom_smooth(method="lm", se = FALSE, color = "darkgreen") +
+  scale_x_continuous() +
+  labs(
+    title = "Health expenditure in % of GDP and life expectancy, 2019",
+    x = "Health expenditure in % of GDP",
+    y = "Life expectancy at birth in years"
+  ) +
+  theme_minimal()
+```
+
+We plot expenditure on a continuous scale rather than a log scale to make the impact of higher spending directly visible. For both expenditure per capita in USD and expenditure as a percentage of GDP the data match our hypothesis clearly. For health expenditure per capita in USD the loess curve is very steep at low spending and then flattens once spending reaches a few thousand dollars per person, with hardly any further gains at the top, which illustrates diminishing marginal returns. For expenditure as a share of GDP we also see a concave pattern, but the curve is less steep at the beginning and flatter, so early increases in the GDP share translate into smaller gains in life expectancy. This confirms our ex ante expectation of a positive concave relationship between expenditure and quality, strongest for USD per capita and weaker for the share of GDP.
+
+##### Health expenditure per capita in USD and perceived health
+
+<br>
+
+```{r}
+# dropping rows where no value for percent_good_phs 
+df_2019_phs <- df_2019 |>
+  filter(!is.na(percent_good_phs))
+
+ggplot(
+  df_2019_phs,
+  aes(x = ind_WorldBank_health_usd,
+      y = percent_good_phs)
+) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(
+      se = FALSE, colour = "red") +
+  geom_smooth(method= "lm", se = FALSE, colour = "darkgreen") + 
+  scale_x_continuous() +
+  labs(
+    title = "Health expenditure per capita in USD and perceived health, 2019",
+    x = "Health expenditure per capita in USD",
+    y = "Percent reporting good or very good health"
+  ) +
+  theme_minimal()
+```
+
+<br>
+
+##### Health expenditure as a share of GDP and perceived health
+
+```{r}
+ggplot(
+  df_2019_phs,
+  aes(x = ind_WorldBank_health_gdp,
+      y = percent_good_phs)
+) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(
+      se = FALSE, colour = "red") +
+  geom_smooth(method= "lm", se = FALSE, colour = "darkgreen") + 
+  scale_x_continuous() +
+  labs(
+    title = "Health expenditure in % of GDP and perceived health, 2019",
+    x = "Health expenditure in % of GDP",
+    y = "Percent reporting good or very good health"
+  ) +
+  theme_minimal()
+```
+
+Perceived health is only available for OECD countries and a few partners, so the sample is almost entirely richer health systems. Very poor countries with low spending and bad health are missing. In this restricted sample higher spending is linked to somewhat better self reported health, but the slope is modest and the cloud is noisy, and there is no clear levelling off or strong difference between USD spending and the GDP share. The plots therefore show a weak positive association among richer countries, but they do not tell us how perceived health would react to higher spending at very low income levels. This matches the part of our hypothesis that predicted a positive but weaker and noisy link for perceived health, but it does not support the stronger claim of clear diminishing returns or a much stronger effect for USD per capita than for the share of GDP.
+
+<br>
+
+<br>
+
+#### 7.2.2 Correlation between healthcare expenditure and healthcare quality: a more precise answer
+
+```{r}
+# Expenditure in USD vs life expectancy
+cor_exp_life <- cor(
+  df_2019$ind_WorldBank_health_usd,
+  df_2019$life_expectancy,
+  use = "complete.obs",
+  method = "pearson"
+)
+
+# Expenditure in USD vs perceived health
+cor_exp_phs <- cor(
+  df_2019$ind_WorldBank_health_usd,
+  df_2019$percent_good_phs,
+  use = "complete.obs",
+  method = "pearson"
+)
+
+# Expenditure as % of GDP vs life expectancy
+cor_exp_gdp_life <- cor(
+  df_2019$ind_WorldBank_health_gdp,
+  df_2019$life_expectancy,
+  use = "complete.obs",
+  method = "pearson"
+)
+
+# Expenditure as % of GDP vs perceived health
+cor_exp_gdp_phs <- cor(
+  df_2019$ind_WorldBank_health_gdp,
+  df_2019$percent_good_phs,
+  use = "complete.obs",
+  method = "pearson"
+)
+
+cat("Correlation Healthcare expenditure in USD: with life expectancy", cor_exp_life, "and with perceived health", cor_exp_phs, "\n", 
+    "Correlation Healthcare expenditure as percentage of GDP: with life expectancy", cor_exp_gdp_life, "and with perceived health", cor_exp_gdp_phs) 
+```
+
+We defined correlation according to the standard Pearson correlation definition.
+
+The strongest correlation is between expenditure per capita in USD and life expectancy, which makes economic sense because more dollars per person pay for staff, drugs and hospitals and directly reduce premature mortality. Correlations with perceived health are smaller, since self reported health is subjective, shaped by age structure and expectations, and in our data only observed for OECD and partner countries where extra spending mainly improves comfort and access rather than basic survival. Correlations with the GDP share are weakest, because this ratio mixes health effort with the size of the economy, so a high share of a small GDP can still mean little real spending per person. Overall this pattern is coherent with our hypothesis of a strong link for life expectancy and USD spending and weaker, noisier links for perceived health and for expenditure measured as a share of GDP, as explored in the previous section.
+
+<br>
+
+<br>
+
+#### 7.2.3 Correlation between health status and life expectancy
+
+```{r}
+# using df_2019_phs again as this is the easiest way to make sure the axes
+# are correct for this subsample of the df_2019
+ggplot(
+  df_2019_phs,
+  aes(x = life_expectancy,
+      y = percent_good_phs)
+) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  scale_x_continuous() +
+  labs(
+    title = "Life expectancy and perceived health, 2019",
+    x = "Life expectancy at birth",
+    y = "Percent reporting good or very good health"
+  ) +
+  theme_minimal()
+```
+
+The plot of life expectancy and perceived health, based on OECD countries and a few partners, shows a noisy cloud with a mildly upward sloping regression line. Countries where people live longer also tend to report better health on average, so the sign of the relationship matches our hypothesis of a positive link. At the same time the slope is shallow and the fit is loose. That is not surprising, because the two variables capture different aspects of health quality, one objective and one subjective, and life expectancy varies only in a narrow band in this rich country sample. The evidence therefore supports our hypothesis in direction, but it also shows that perceived health and life expectancy move together only imperfectly and cannot be treated as interchangeable measures.
+
+<br>
+
+<br>
+
+#### 7.2.4 Correlation between expenditures and healthcare quality for high and low income countries
+
+##### Correlation between expenditures per capita in USD and life expectancy
+
+```{r, fig.width = 13, fig.height = 5}
+library(dplyr)
+
+income_cols <- c(
+  "Low income"          = "#1b9e77",
+  "Lower middle income" = "#d95f02",
+  "Upper middle income" = "#7570b3",
+  "High income"         = "#e7298a"
+)
+
+ggplot(df_2019,
+       aes(x = ind_WorldBank_health_usd,
+           y = life_expectancy,
+           colour = income)) +
+  geom_point(alpha = 0.8, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.9) +
+  scale_x_log10() +
+  scale_colour_manual(values = income_cols) +
+  labs(
+    title = "Health expenditure per capita in USD and life expectancy by income group, 2019",
+    x = "Health expenditure per capita in USD (log scale)",
+    y = "Life expectancy at birth (years)",
+    colour = "Income group"
+  ) +
+  theme_minimal()
+```
+
+<br>
+
+##### Correlation between expenditures as a share of GDP and life expectancy
+
+```{r, fig.width = 13, fig.height = 5}
+ggplot(df_2019,
+       aes(x = ind_WorldBank_health_gdp,
+           y = life_expectancy,
+           colour = income)) +
+  geom_point(alpha = 0.8, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.9) +
+  scale_x_continuous() +
+  scale_colour_manual(values = income_cols) +
+  labs(
+    title = "Health expenditure in % of GDP and life expectancy by income group, 2019",
+    x = "Health expenditure in % of GDP",
+    y = "Life expectancy at birth (years)",
+    colour = "Income group"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+corr_by_income <- df_2019 |>
+  group_by(income) |>
+  summarise(
+    cor_exp_life = cor(
+      ind_WorldBank_health_usd,
+      life_expectancy,
+      use = "complete.obs",
+      method = "pearson"
+    ),
+    n_countries = n(),
+    .groups = "drop"
+  )
+
+corr_by_income
+```
+
+```{r}
+corr_by_income_of_gdp <- df_2019 |>
+  group_by(income) |>
+  summarise(
+    cor_exp_life = cor(
+      ind_WorldBank_health_gdp,
+      life_expectancy,
+      use = "complete.obs",
+      method = "pearson"
+    ),
+    n_countries = n(),
+    .groups = "drop"
+  )
+
+corr_by_income_of_gdp
+```
+
+For the income group comparison we plot health expenditure per capita in USD on a log scale and compute Pearson correlations by group. The pattern clearly contradicts our hypothesis that the strongest link would appear in low income countries. In low income countries the correlation between spending and life expectancy is almost zero and the fitted line is almost flat. It rises for lower middle and upper middle income groups and is strongest in high income countries. A plausible explanation is that in very poor countries life expectancy is driven mainly by non health factors such as conflict, sanitation, nutrition and state capacity, so extra health spending does not systematically translate into longer lives. Once these background conditions improve, additional health resources show up much more directly in higher life expectancy, which is why the relationship is tightest for high income countries.
+
+For expenditure as a share of GDP, plotted on a continuous scale, slopes and correlations are small for all groups and sometimes even slightly negative. This supports our view that the GDP share is a noisy indicator: poor countries can devote a large share of a very small GDP to health and still have low life expectancy, while rich countries can reach high life expectancy with only a moderate share because their absolute resources and living conditions are much better. Overall, spending per person is the more informative measure, and the data show the strongest expenditure quality link in high income, not low income, countries, so our original hypothesis must be revised.
+
+<br>
+
+<br>
+
+#### 7.2.5 Final graph
+
+```{r, fig.width=13, fig.height=5}
+library(ggrepel)
+
+group_year <- master_df |>
+  group_by(income, year) |>
+  summarise(
+    mean_exp_usd  = mean(ind_WorldBank_health_usd, na.rm = TRUE),
+    mean_life_exp = mean(life_expectancy,         na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# define years to label (first and last)
+start_df <- group_year |>
+  group_by(income) |>
+  slice_min(year, with_ties = FALSE)
+
+end_df <- group_year |>
+  group_by(income) |>
+  slice_max(year, with_ties = FALSE) 
+
+ggplot(group_year,
+       aes(x = mean_exp_usd,
+           y = mean_life_exp,
+           colour = income,
+           group = income)) +
+  geom_path(size = 1.1) +                     # smooth line per income group
+  # hollow dot for start
+  geom_point(data = start_df,
+             size = 2.8, shape = 21, fill = "white", stroke = 1) +
+  # hollow dot for end
+  geom_point(data = end_df,
+             size = 2.8, shape = 21, fill = "white", stroke = 1) +
+  # label years (to show direction)
+   geom_text(
+    data = start_df,
+    aes(label = year),
+    vjust = 1.6, size = 3, show.legend = FALSE
+  ) +
+  geom_text(
+    data = end_df,
+    aes(label = year),
+    vjust = -0.8, size = 3, show.legend = FALSE
+  ) +
+  scale_x_log10() +
+  labs(
+    title = "Evolution of life expectancy and health expenditure by income group",
+    x = "Average health expenditure per capita (USD, log scale)",
+    y = "Average life expectancy at birth (years)",
+    colour = "Income group"
+  ) +
+  theme_minimal() +
+  scale_colour_brewer(type = "qual", palette = "Dark2")
+```
+
+The final graph looks at a different question than the previous one and that explains the difference in what we find. In the 2019 graph we compared individual countries within each income group and saw that the correlation between spending per capita and life expectancy is weakest in low income countries and strongest in high income countries. Here we instead plot, for each income group, the average spending and average life expectancy over time from 2000 to 2022. All four group paths move up and to the right, so as average spending rises over time average life expectancy also increases in every income bracket, which is consistent with our basic hypothesis that more resources support better health outcomes. Low and lower middle income groups start from very low levels of both variables and show clear improvement, but our earlier result suggests that these gains reflect broader development, not only higher health budgets. Upper middle and high income groups already start at high life expectancy and continue to improve more slowly as spending rises further, which fits the idea of diminishing marginal returns at high levels of spending and our revised conclusion that the tightest link between spending and outcomes is found among rich countries. The distance between the paths narrows only slightly, so there is some convergence, but large and persistent gaps in both spending and life expectancy between poor and rich country groups remain.
+
+<hr>
+
+<br>
+
+<br>
+
+<br>
+
+## 8 Wrap up
+
+<br>
+
+In this project we asked whether higher health spending buys better health. Using World Bank data on health expenditure and life expectancy together with OECD data on perceived health, we find a clear positive but concave relationship between spending per person and life expectancy, with diminishing gains once a few thousand dollars of spending is reached. Perceived health is also positively related to spending, but the link is weaker and noisier, partly because it is subjective and only observed for mostly rich countries. Splitting by income groups shows that the association between spending and life expectancy is tightest in high income countries. The final income group paths from 2000 to 2022 summarise this story visually, as higher average spending over time goes hand in hand with longer lives in every group, yet large gaps between rich and poor countries remain.
+
+<br>
+
+<br>
+
+### 8.1 Further steps
+
+Use alternative outcome measures like healthspan to capture healthcare quality.
+
+Add predictors like education and inequality to compare their roles alongside spending.
+
+Estimate regressions that fix country effects (controlling for stable differences between countries) and fix year effects (controlling for shocks). This lets us isolate the impact of health spending.
